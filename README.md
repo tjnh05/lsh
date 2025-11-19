@@ -1,7 +1,3 @@
-Here is a comprehensive `README.md` for your project.
-
-***
-
 # LSH (LLM Shell)
 
 **LSH** is a Python-based shell wrapper that integrates a Local Large Language Model (LLM) via Ollama. It behaves like a normal shell for standard operations but acts as an intelligent agent when commands fail.
