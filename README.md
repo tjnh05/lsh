@@ -42,10 +42,6 @@ If a command crashes (non-zero exit code), LSH captures the output, sends it to 
 
 Open `lsh.py` in your text editor to tweak the settings at the top of the file:
 
-```python
-LLM_MODEL  = "gemma3n:latest"    # The specific model name you pulled via Ollama.
-```
-
 ### Interactive Exclusion List
 Modify `IGNORE_LIST` in `lsh.py` to add more tools that should bypass the LLM capture logic (e.g., custom TUI apps):
 
