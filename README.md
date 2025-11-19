@@ -4,7 +4,7 @@
 
 If a command crashes (non-zero exit code), LSH captures the output, sends it to the LLM, and suggests a fix automatically.
 
-## 🚀 Features
+## Features
 
 *   **Native Shell Experience**: Uses `pty` (pseudo-terminals) to ensure colors, formatting, and real-time output streaming work exactly like Bash/Zsh.
 *   **Smart Error Recovery**: Automatically detects non-zero exit codes and consults the LLM.
@@ -12,13 +12,13 @@ If a command crashes (non-zero exit code), LSH captures the output, sends it to 
 *   **Agent Mode**: Option to automatically execute the LLM's suggested fix (`AGENT_MODE = True`).
 *   **Privacy First**: Runs entirely locally using Ollama. No shell history or data is sent to the cloud.
 
-## 🛠 Prerequisites
+## Prerequisites
 
 1.  **Python 3.8+**
 2.  **Ollama**: You need [Ollama](https://ollama.com/) installed and running locally.
 3.  **An LLM Model**: You need to pull a model (e.g., `gemma`, `llama3`, `mistral`).
 
-## 📦 Installation
+## Installation
 
 1.  **Clone or save the script**:
     Save the code as `lsh.py`.
@@ -38,7 +38,7 @@ If a command crashes (non-zero exit code), LSH captures the output, sends it to 
     ollama pull gemma3n:latest
     ```
 
-## ⚙️ Configuration
+## Configuration
 
 Open `lsh.py` in your text editor to tweak the settings at the top of the file:
 
@@ -55,7 +55,7 @@ IGNORE_LIST = {
 }
 ```
 
-## 🖥️ Usage
+## Usage
 
 Start the shell:
 
@@ -66,6 +66,11 @@ python3 lsh.py
 or in agent mode
 ```bash
 python3 lsh.py --agent
+```
+
+customize llm
+```bash
+python3 lsh.py --llm gpt-oss:120b
 ```
 
 ### 1. Normal Commands
