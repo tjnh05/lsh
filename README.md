@@ -69,6 +69,11 @@ customize llm
 python3 lsh.py --llm gpt-oss:120b
 ```
 
+customize ollama addr
+```bash
+python3 lsh.py --ollama http://localhost:11434
+```
+
 ### 1. Normal Commands
 Works exactly like your standard terminal.
 ```bash
