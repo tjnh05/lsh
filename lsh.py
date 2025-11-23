@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import sys
 import subprocess
@@ -7,42 +8,46 @@ import re
 import shlex
 from langchain_community.llms import Ollama
 import warnings
+import argparse
+
 warnings.filterwarnings("ignore")
 
-# --- Configuration ---
-AGENT_MODE = False                # set True -> auto-run the suggested fix
-LLM_MODEL  = "gemma3n:latest"     # Change to your model (e.g., llama3, mistral)
-
-# Tools that take over the full screen or require raw TTY access.
-# We do NOT capture output for these to prevent UI glitches.
+# Tools that take over the full screen or require raw TTY access
 IGNORE_LIST = {
     "vi", "vim", "nvim", "nano", "emacs",
     "htop", "top", "nvtop", "btop", "k9s",
     "less", "more", "man", "ssh", "tmux", "screen"
 }
 
-# --- LLM Setup ---
-# Optional: Set env vars if not set globally
-os.environ.setdefault('OLLAMA_HOST', 'http://localhost:11434')
 
-print(f"Connecting to LLM ({LLM_MODEL})...")
-try:
-    llm = Ollama(model=LLM_MODEL)
-except Exception as e:
-    print(f"Error initializing Ollama: {e}")
-    sys.exit(1)
+def setup_llm(model_name: str, ollama_host: str):
+    """Initialize and return the Ollama LLM instance with proper config."""
+    print(f"Connecting to Ollama at {ollama_host} using model '{model_name}'...")
+    
+    # Set the host (supports both http://host:port and just host:port)
+    os.environ['OLLAMA_HOST'] = ollama_host.rstrip('/')
+    if not os.environ['OLLAMA_HOST'].startswith('http'):
+        os.environ['OLLAMA_HOST'] = 'http://' + os.environ['OLLAMA_HOST']
+
+    try:
+        llm = Ollama(model=model_name)
+        # Test connection with a tiny call
+        llm.invoke("Say 'hi' in one word.")  # Warm up + verify
+        print("LLM connected successfully!")
+        return llm
+    except Exception as e:
+        print(f"Failed to initialize Ollama: {e}")
+        print("Make sure ollama is running and the model is pulled: ollama pull {model_name}")
+        sys.exit(1)
+
 
 def extract_code_block(text: str) -> str:
-    """Extracts the content inside ```bash ... ``` or ``` ... ```."""
     pattern = r"```(?:bash|sh)?\n(.*?)```"
     matches = re.findall(pattern, text, re.DOTALL)
-    if matches:
-        return matches[0].strip()
-    return text.strip() # Fallback: return raw text if no code block
+    return matches[0].strip() if matches else text.strip()
 
-def ask_llm_for_fix(cmd: str, full_output: str, code: int) -> str:
-    """Consults the LLM for a fix."""
-    # Truncate output if it's massive to save context window
+
+def ask_llm_for_fix(llm, cmd: str, full_output: str, code: int) -> str:
     truncated_out = full_output[-2000:] if len(full_output) > 2000 else full_output
     
     prompt = (
@@ -56,18 +61,18 @@ def ask_llm_for_fix(cmd: str, full_output: str, code: int) -> str:
     )
     
     try:
-        print(f"\nAnalyzing failure with {LLM_MODEL}...", end="", flush=True)
+        print(f"\nAnalyzing failure with {llm.model}...", end="", flush=True)
         response = llm.invoke(prompt)
         print(" Done.")
         return response
     except Exception as e:
         return f"LLM Error: {e}"
 
+
 def run_interactive(cmd_list):
-    """Runs interactive tools directly (std streams connected)."""
     try:
         subprocess.run(cmd_list)
-        return 0, "" # We don't capture output from interactive tools
+        return 0, ""
     except FileNotFoundError:
         print(f"lsh: command not found: {cmd_list[0]}")
         return 127, ""
@@ -75,48 +80,33 @@ def run_interactive(cmd_list):
         print(f"lsh: execution error: {e}")
         return 1, ""
 
+
 def run_capturing(cmd_str):
-    """
-    Runs command in a PTY (pseudo-terminal).
-    Streams output to user in real-time AND captures it into a buffer.
-    """
     master, slave = pty.openpty()
-    
-    # Start the process using the user's default shell (bash/zsh/sh)
-    # This supports pipes (|) and redirects (>) naturally.
     p = subprocess.Popen(
-        cmd_str, 
-        shell=True, 
-        stdout=slave, 
-        stderr=slave, 
+        cmd_str,
+        shell=True,
+        stdout=slave,
+        stderr=slave,
         stdin=slave,
         close_fds=True
     )
-    
-    os.close(slave) # Close slave in parent, otherwise we hang reading
+    os.close(slave)
 
     captured_output = bytearray()
     
     try:
         while True:
-            # Check if data is available to read from master
             r, _, _ = select.select([master], [], [], 0.1)
-            
             if master in r:
                 data = os.read(master, 1024)
                 if not data:
-                    break # EOF
-                
-                # 1. Show user immediately (Raw byte stream)
+                    break
                 os.write(sys.stdout.fileno(), data)
-                
-                # 2. Buffer for LLM
                 captured_output.extend(data)
             
-            # Check if process is dead
             if p.poll() is not None:
-                # Read any remaining data
-                rest = os.read(master, 4096) # Non-blocking try
+                rest = os.read(master, 4096)
                 if rest:
                     os.write(sys.stdout.fileno(), rest)
                     captured_output.extend(rest)
@@ -127,86 +117,80 @@ def run_capturing(cmd_str):
         os.close(master)
 
     p.wait()
-    output_str = captured_output.decode("utf-8", errors="replace")
-    return p.returncode, output_str
+    return p.returncode, captured_output.decode("utf-8", errors="replace")
 
-# --- Main Loop ---
-def main():
-    print(f"Welcome to LSH (LLM Shell). Type 'exit' to quit.")
+
+def main(llm, agent_mode: bool):
+    print("Welcome to LSH (LLM Shell). Type 'exit' or 'quit' to quit.\n")
     
     while True:
         try:
-            # Get current directory for prompt
             cwd = os.getcwd()
-            # Pretty prompt
             prompt = f"\033[1;32mlsh\033[0m:\033[1;34m{cwd}\033[0m$ "
-            
             user_input = input(prompt).strip()
             
             if not user_input:
                 continue
-
             if user_input in ["exit", "quit"]:
+                print("Goodbye!")
                 break
 
-            # Tokenize to check the first command
             try:
                 tokens = shlex.split(user_input)
-                if not tokens: continue
+                if not tokens:
+                    continue
                 base_cmd = tokens[0]
             except ValueError:
-                # Handle unclosed quotes, etc.
                 base_cmd = user_input.split()[0]
 
-            # 1. Handle Built-ins
+            # Built-in: cd
             if base_cmd == "cd":
+                target = os.path.expanduser(tokens[1]) if len(tokens) > 1 else os.path.expanduser("~")
                 try:
-                    target = tokens[1] if len(tokens) > 1 else os.path.expanduser("~")
                     os.chdir(target)
                 except Exception as e:
                     print(f"cd: {e}")
                 continue
 
-            # 2. Check for Interactive/Exclude list
+            # Interactive tools (no capture, no LLM help)
             if base_cmd in IGNORE_LIST:
-                exit_code, _ = run_interactive(tokens)
-                # We don't use LLM for vim/htop failures usually
+                run_interactive(tokens)
                 continue
 
-            # 3. Run Standard Command (Capturing)
+            # Regular command with capture
             exit_code, full_output = run_capturing(user_input)
 
-            # 4. Error Handling Logic
             if exit_code != 0:
-                response = ask_llm_for_fix(user_input, full_output, exit_code)
-                
+                response = ask_llm_for_fix(llm, user_input, full_output, exit_code)
                 fixed_cmd = extract_code_block(response)
                 
                 print(f"\n\033[1;33mSuggested Fix:\033[0m {fixed_cmd}")
                 
-                if AGENT_MODE:
-                    print(f"\033[1;35mAgent Mode executing fix...\033[0m")
-                    # Recursive call? Or just run once? Let's run once to avoid infinite loops.
+                if agent_mode:
+                    print("\033[1;35mAgent Mode: executing fix...\033[0m")
                     run_capturing(fixed_cmd)
                 else:
-                    # Interactive Mode
-                    confirm = input("Run this command? [y/N] ")
-                    if confirm.lower() == 'y':
+                    confirm = input("\nRun this command? [y/N] ").strip().lower()
+                    if confirm == 'y':
                         run_capturing(fixed_cmd)
 
         except KeyboardInterrupt:
-            print("\n")
-            continue
+            print("^C")
         except EOFError:
+            print("\nGoodbye!")
             break
 
-if __name__ == "__main__":
-    import argparse
 
-    parser = argparse.ArgumentParser(description="Use LLM to fix shell commands.")
-    parser.add_argument("--agent", default=False, action="store_true", help="Use agent mode.")
-    parser.add_argument("--llm", default="gemma3n:latest", help="Language model to use.")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="LSH - LLM-powered shell assistant")
+    parser.add_argument("--agent", action="store_true", help="Enable agent mode (auto-run fixes)")
+    parser.add_argument("--llm", default="gemma3n:latest", help="Ollama model to use (default: gemma3n:latest)")
+    parser.add_argument("--ollama", default="http://localhost:11434", help="Ollama host (default: http://localhost:11434)")
 
     args = parser.parse_args()
-    AGENT_MODE, LLM_MODEL = args.agent, args.llm
-    main()
+
+    # Now we initialize the LLM *after* parsing args
+    llm = setup_llm(model_name=args.llm, ollama_host=args.ollama)
+
+    # Start the shell
+    main(llm=llm, agent_mode=args.agent)
